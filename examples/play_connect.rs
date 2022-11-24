@@ -14,7 +14,10 @@ use librespot_connect::{
     spirc::{Spirc, SpircLoadCommand},
 };
 use librespot_metadata::{Album, Metadata};
-use librespot_playback::mixer::{softmixer::SoftMixer, Mixer, MixerConfig};
+use librespot_playback::{
+    mixer::{softmixer::SoftMixer, Mixer, MixerConfig},
+    player::PlayerEvent,
+};
 use librespot_protocol::spirc::TrackRef;
 use std::env;
 use tokio::join;
@@ -59,38 +62,60 @@ async fn main() {
     .await
     .unwrap();
 
-    join!(spirc_task, async {
-        let album = Album::get(&session, &SpotifyId::from_uri(&context_uri).unwrap())
+    join!(
+        spirc_task,
+        async {
+            let album = Album::get(
+                &session,
+                &SpotifyId::from_uri(&context_uri).expect("Invalid context uri"),
+            )
             .await
             .unwrap();
-        let tracks = album
-            .tracks()
-            .map(|track_id| {
-                let mut track = TrackRef::new();
-                track.set_gid(Vec::from(track_id.to_raw()));
-                track
-            })
-            .collect();
+            let tracks = album
+                .tracks()
+                .map(|track_id| {
+                    let mut track = TrackRef::new();
+                    track.set_gid(Vec::from(track_id.to_raw()));
+                    track
+                })
+                .collect();
 
-        println!(
-            "Playing album: {} by {}",
-            &album.name,
-            album
-                .artists
-                .first()
-                .map_or("unknown", |artist| &artist.name)
-        );
+            println!(
+                "Playing album: {} by {}",
+                &album.name,
+                album
+                    .artists
+                    .first()
+                    .map_or("unknown", |artist| &artist.name)
+            );
 
-        spirc.activate().unwrap();
-        spirc
-            .load(SpircLoadCommand {
-                context_uri,
-                start_playing: true,
-                shuffle: false,
-                repeat: false,
-                playing_track_index: 0, // the index specifies which track in the context starts playing, in this case the first in the album
-                tracks,
-            })
-            .unwrap();
-    });
+            spirc.activate().unwrap();
+            spirc
+                .load(SpircLoadCommand {
+                    context_uri,
+                    start_playing: true,
+                    shuffle: false,
+                    repeat: false,
+                    playing_track_index: 0, // the index specifies which track in the context starts playing, in this case the first in the album
+                    tracks,
+                })
+                .unwrap();
+        },
+        async {
+            let mut events = spirc.events();
+            while let Ok(event) = events.recv().await {
+                println!("Event: {:?}", &event);
+
+                match event {
+                    PlayerEvent::Stopped { .. }
+                    | PlayerEvent::Loading { .. }
+                    | PlayerEvent::Playing { .. }
+                    | PlayerEvent::Paused { .. } => {
+                        println!("Player state: {:?}", spirc.play_status().await)
+                    }
+                    _ => {}
+                }
+            }
+        }
+    );
 }
