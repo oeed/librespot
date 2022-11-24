@@ -11,7 +11,7 @@ use futures_util::{stream::FusedStream, FutureExt, StreamExt};
 use protobuf::{self, Message};
 use rand::seq::SliceRandom;
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
@@ -95,6 +95,7 @@ struct SpircTask {
     sender: MercurySender,
     commands: Option<mpsc::UnboundedReceiver<SpircCommand>>,
     player_events: Option<PlayerEventChannel>,
+    player_events_broadcast: broadcast::Sender<PlayerEvent>,
 
     shutdown: bool,
     session: Session,
@@ -170,6 +171,7 @@ const VOLUME_STEP_SIZE: u16 = 1024; // (u16::MAX + 1) / VOLUME_STEPS
 
 pub struct Spirc {
     commands: mpsc::UnboundedSender<SpircCommand>,
+    events: broadcast::Sender<PlayerEvent>,
 }
 
 fn initial_state() -> State {
@@ -415,6 +417,7 @@ impl Spirc {
 
         let sender = session.mercury().sender(sender_uri);
 
+        let (event_tx, _) = broadcast::channel(16);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
         let initial_volume = config.initial_volume;
@@ -443,6 +446,7 @@ impl Spirc {
             sender,
             commands: Some(cmd_rx),
             player_events: Some(player_events),
+            player_events_broadcast: event_tx.clone(),
 
             shutdown: false,
             session,
@@ -461,7 +465,10 @@ impl Spirc {
             task.set_volume(current_volume);
         }
 
-        let spirc = Spirc { commands: cmd_tx };
+        let spirc = Spirc {
+            commands: cmd_tx,
+            events: event_tx,
+        };
 
         task.hello()?;
 
@@ -560,6 +567,10 @@ impl Spirc {
         let (send, recv) = oneshot::channel();
         self.commands.send(SpircCommand::GetActive(send))?;
         Ok(recv.await?)
+    }
+
+    pub fn events(&self) -> broadcast::Receiver<PlayerEvent> {
+        self.events.subscribe()
     }
 }
 
@@ -800,7 +811,7 @@ impl SpircTask {
                 }
                 SpircCommand::GetPlayStatus(respond_to) => {
                     respond_to
-                        .send(self.state.get_status().clone())
+                        .send(self.state.get_status())
                         .map_err(|_| Error::internal("Channel closed"))?;
                     Ok(())
                 }
@@ -835,7 +846,9 @@ impl SpircTask {
         if let Some(play_request_id) = event.get_play_request_id() {
             if Some(play_request_id) == self.play_request_id {
                 match event {
-                    PlayerEvent::EndOfTrack { .. } => self.handle_end_of_track(),
+                    PlayerEvent::EndOfTrack { .. } => {
+                        self.handle_end_of_track()?;
+                    }
                     PlayerEvent::Loading { .. } => {
                         match self.play_status {
                             SpircPlayStatus::LoadingPlay { position_ms } => {
@@ -854,7 +867,7 @@ impl SpircTask {
                                 trace!("==> kPlayStatusLoading");
                             }
                         }
-                        self.notify(None)
+                        self.notify(None)?;
                     }
                     PlayerEvent::Playing { position_ms, .. }
                     | PlayerEvent::PositionCorrection { position_ms, .. }
@@ -869,9 +882,7 @@ impl SpircTask {
                                 if (*nominal_start_time - new_nominal_start_time).abs() > 100 {
                                     *nominal_start_time = new_nominal_start_time;
                                     self.update_state_position(position_ms);
-                                    self.notify(None)
-                                } else {
-                                    Ok(())
+                                    self.notify(None)?;
                                 }
                             }
                             SpircPlayStatus::LoadingPlay { .. }
@@ -882,9 +893,9 @@ impl SpircTask {
                                     nominal_start_time: new_nominal_start_time,
                                     preloading_of_next_track_triggered: false,
                                 };
-                                self.notify(None)
+                                self.notify(None)?;
                             }
-                            _ => Ok(()),
+                            _ => {}
                         }
                     }
                     PlayerEvent::Paused {
@@ -900,7 +911,7 @@ impl SpircTask {
                                     position_ms: new_position_ms,
                                     preloading_of_next_track_triggered: false,
                                 };
-                                self.notify(None)
+                                self.notify(None)?;
                             }
                             SpircPlayStatus::LoadingPlay { .. }
                             | SpircPlayStatus::LoadingPause { .. } => {
@@ -910,32 +921,35 @@ impl SpircTask {
                                     position_ms: new_position_ms,
                                     preloading_of_next_track_triggered: false,
                                 };
-                                self.notify(None)
+                                self.notify(None)?;
                             }
-                            _ => Ok(()),
+                            _ => {}
                         }
                     }
                     PlayerEvent::Stopped { .. } => {
                         trace!("==> kPlayStatusStop");
                         match self.play_status {
-                            SpircPlayStatus::Stopped => Ok(()),
+                            SpircPlayStatus::Stopped => {}
                             _ => {
                                 self.state.set_status(PlayStatus::kPlayStatusStop);
                                 self.play_status = SpircPlayStatus::Stopped;
-                                self.notify(None)
+                                self.notify(None)?;
                             }
                         }
                     }
                     PlayerEvent::TimeToPreloadNextTrack { .. } => {
                         self.handle_preload_next_track();
-                        Ok(())
                     }
                     PlayerEvent::Unavailable { track_id, .. } => {
                         self.handle_unavailable(track_id);
-                        Ok(())
                     }
-                    _ => Ok(()),
-                }
+                    _ => {}
+                };
+
+                // send will fail if there are no recievers, which is fine
+                // as there may simply be no consumers
+                self.player_events_broadcast.send(event.clone()).ok();
+                Ok(())
             } else {
                 Ok(())
             }
