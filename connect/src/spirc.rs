@@ -130,7 +130,7 @@ pub enum SpircCommand {
     GetTracks(oneshot::Sender<Vec<TrackRef>>),
     GetShuffle(oneshot::Sender<bool>),
     GetRepeat(oneshot::Sender<bool>),
-    GetPlayStatus(oneshot::Sender<SpircPlayStatus>),
+    GetPlayStatus(oneshot::Sender<PlayStatus>),
     GetActive(oneshot::Sender<bool>),
 }
 
@@ -550,7 +550,7 @@ impl Spirc {
         Ok(recv.await?)
     }
 
-    pub async fn play_status(&self) -> Result<SpircPlayStatus, Error> {
+    pub async fn play_status(&self) -> Result<PlayStatus, Error> {
         let (send, recv) = oneshot::channel();
         self.commands.send(SpircCommand::GetPlayStatus(send))?;
         Ok(recv.await?)
@@ -800,7 +800,7 @@ impl SpircTask {
                 }
                 SpircCommand::GetPlayStatus(respond_to) => {
                     respond_to
-                        .send(self.play_status.clone())
+                        .send(self.state.get_status().clone())
                         .map_err(|_| Error::internal("Channel closed"))?;
                     Ok(())
                 }
