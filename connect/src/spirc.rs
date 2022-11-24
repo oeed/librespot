@@ -11,7 +11,7 @@ use futures_util::{stream::FusedStream, FutureExt, StreamExt};
 use protobuf::{self, Message};
 use rand::seq::SliceRandom;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
@@ -55,8 +55,8 @@ impl From<SpircError> for Error {
     }
 }
 
-#[derive(Debug)]
-enum SpircPlayStatus {
+#[derive(Debug, Clone)]
+pub enum SpircPlayStatus {
     Stopped,
     LoadingPlay {
         position_ms: u32,
@@ -124,6 +124,14 @@ pub enum SpircCommand {
     SetVolume(u16),
     Activate,
     Load(SpircLoadCommand),
+    GetContextUri(oneshot::Sender<String>),
+    GetPositionMs(oneshot::Sender<u32>),
+    GetTrackIndex(oneshot::Sender<u32>),
+    GetTracks(oneshot::Sender<Vec<TrackRef>>),
+    GetShuffle(oneshot::Sender<bool>),
+    GetRepeat(oneshot::Sender<bool>),
+    GetPlayStatus(oneshot::Sender<SpircPlayStatus>),
+    GetActive(oneshot::Sender<bool>),
 }
 
 #[derive(Debug)]
@@ -505,6 +513,54 @@ impl Spirc {
     pub fn load(&self, command: SpircLoadCommand) -> Result<(), Error> {
         Ok(self.commands.send(SpircCommand::Load(command))?)
     }
+
+    pub async fn context_uri(&self) -> Result<String, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetContextUri(send))?;
+        Ok(recv.await?)
+    }
+
+    pub async fn position_ms(&self) -> Result<u32, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetPositionMs(send))?;
+        Ok(recv.await?)
+    }
+
+    pub async fn track_index(&self) -> Result<u32, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetTrackIndex(send))?;
+        Ok(recv.await?)
+    }
+
+    pub async fn tracks(&self) -> Result<Vec<TrackRef>, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetTracks(send))?;
+        Ok(recv.await?)
+    }
+
+    pub async fn is_shuffled(&self) -> Result<bool, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetShuffle(send))?;
+        Ok(recv.await?)
+    }
+
+    pub async fn is_repeated(&self) -> Result<bool, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetRepeat(send))?;
+        Ok(recv.await?)
+    }
+
+    pub async fn play_status(&self) -> Result<SpircPlayStatus, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetPlayStatus(send))?;
+        Ok(recv.await?)
+    }
+
+    pub async fn is_active(&self) -> Result<bool, Error> {
+        let (send, recv) = oneshot::channel();
+        self.commands.send(SpircCommand::GetActive(send))?;
+        Ok(recv.await?)
+    }
 }
 
 impl SpircTask {
@@ -705,6 +761,54 @@ impl SpircTask {
                 SpircCommand::Load(command) => {
                     self.handle_load(&command.into())?;
                     self.notify(None)
+                }
+                SpircCommand::GetContextUri(respond_to) => {
+                    respond_to
+                        .send(self.state.get_context_uri().to_owned())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
+                }
+                SpircCommand::GetPositionMs(respond_to) => {
+                    respond_to
+                        .send(self.position())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
+                }
+                SpircCommand::GetTrackIndex(respond_to) => {
+                    respond_to
+                        .send(self.state.get_playing_track_index())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
+                }
+                SpircCommand::GetTracks(respond_to) => {
+                    respond_to
+                        .send(self.state.get_track().to_vec())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
+                }
+                SpircCommand::GetShuffle(respond_to) => {
+                    respond_to
+                        .send(self.state.get_shuffle())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
+                }
+                SpircCommand::GetRepeat(respond_to) => {
+                    respond_to
+                        .send(self.state.get_repeat())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
+                }
+                SpircCommand::GetPlayStatus(respond_to) => {
+                    respond_to
+                        .send(self.play_status.clone())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
+                }
+                SpircCommand::GetActive(respond_to) => {
+                    respond_to
+                        .send(self.device.get_is_active())
+                        .map_err(|_| Error::internal("Channel closed"))?;
+                    Ok(())
                 }
                 _ => Ok(()),
             }
