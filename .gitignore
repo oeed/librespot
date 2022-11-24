@@ -6,3 +6,5 @@ spotify_appkey.key
 .history
 *.save
 *.*~
+.DS_Store
+.vscode
