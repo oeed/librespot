@@ -800,7 +800,7 @@ impl SpircTask {
                 }
                 SpircCommand::GetPlayStatus(respond_to) => {
                     respond_to
-                        .send(self.state.get_status().clone())
+                        .send(self.state.get_status())
                         .map_err(|_| Error::internal("Channel closed"))?;
                     Ok(())
                 }
