@@ -2,8 +2,9 @@ use http::{Method, Request};
 use hyper::Body;
 use serde::{
     de::{DeserializeOwned, IgnoredAny},
-    Deserialize, Serialize,
+    Deserialize, Deserializer, Serialize,
 };
+use time::OffsetDateTime;
 use url::Url;
 
 use crate::{Error, SpotifyId};
@@ -143,8 +144,9 @@ pub struct AlbumsResponse<R> {
 
 #[derive(Debug, Deserialize)]
 pub struct LibraryAlbumResponse {
-    // TODO: deserialize to time
-    // addedAt: {isoString: "2020-11-07T03:27:58Z"}
+    #[serde(rename = "addedAt")]
+    #[serde(deserialize_with = "deserialize_iso_string")]
+    added_at: OffsetDateTime,
     pub album: LibraryAlbumResponseAlbum,
 }
 
@@ -161,8 +163,8 @@ pub struct LibraryAlbumResponseAlbumData {
     pub artists: ItemsResponse<LibraryAlbumResponseAlbumDataArtist>,
     #[serde(rename = "coverArt")]
     pub cover_art: LibraryAlbumResponseAlbumDataCoverArt,
-    // TODO: deserialize to time
-    // addedAt: {isoString: "2020-11-07T03:27:58Z"}
+    #[serde(deserialize_with = "deserialize_iso_string")]
+    date: OffsetDateTime,
 }
 
 #[derive(Debug, Deserialize)]
@@ -186,4 +188,19 @@ pub struct LibraryAlbumResponseAlbumDataCoverArtSource {
     pub url: String,
     pub width: u16,
     pub height: u16,
+}
+
+/// Deserializes an object like `{isoString: "2020-11-07T03:27:58Z"}` in to a `OffsetDateTime`
+fn deserialize_iso_string<'de, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct IsoStringWrapper {
+        #[serde(rename = "isoString")]
+        #[serde(deserialize_with = "time::serde::iso8601::deserialize")]
+        iso_string: OffsetDateTime,
+    }
+
+    IsoStringWrapper::deserialize(deserializer).map(|wrapper| wrapper.iso_string)
 }
