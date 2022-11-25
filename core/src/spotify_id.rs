@@ -4,6 +4,7 @@ use std::{
     ops::Deref,
 };
 
+use serde::{de::Visitor, Deserialize, Deserializer};
 use thiserror::Error;
 
 use crate::Error;
@@ -284,6 +285,32 @@ impl fmt::Debug for SpotifyId {
 impl fmt::Display for SpotifyId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_uri().unwrap_or_else(|_| "invalid uri".into()))
+    }
+}
+
+struct SpotifyIdVisitor;
+
+impl<'de> Visitor<'de> for SpotifyIdVisitor {
+    type Value = SpotifyId;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a Spotify URI")
+    }
+
+    fn visit_str<E>(self, src: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        SpotifyId::from_uri(src).map_err(|err| E::custom(err.to_string()))
+    }
+}
+
+impl<'de> Deserialize<'de> for SpotifyId {
+    fn deserialize<D>(deserializer: D) -> Result<SpotifyId, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(SpotifyIdVisitor)
     }
 }
 

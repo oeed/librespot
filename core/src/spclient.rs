@@ -39,6 +39,10 @@ use crate::{
     Error, FileId, SpotifyId,
 };
 
+pub use self::graphql::*;
+
+mod graphql;
+
 component! {
     SpClient : SpClientInner {
         accesspoint: Option<SocketAddress> = None,
@@ -462,28 +466,12 @@ impl SpClient {
                 .uri(url)
                 .body(Body::from(body.to_owned()))?;
 
-            // Reconnection logic: keep getting (cached) tokens because they might have expired.
-            let token = self
-                .session()
-                .token_provider()
-                .get_token("playlist-read")
-                .await?;
-
             let headers_mut = request.headers_mut();
             if let Some(ref hdrs) = headers {
                 *headers_mut = hdrs.clone();
             }
-            headers_mut.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("{} {}", token.token_type, token.access_token,))?,
-            );
 
-            if let Ok(client_token) = self.client_token().await {
-                headers_mut.insert(CLIENT_TOKEN, HeaderValue::from_str(&client_token)?);
-            } else {
-                // currently these endpoints seem to work fine without it
-                warn!("Unable to get client token. Trying to continue without...");
-            }
+            self.add_request_headers(headers_mut).await?;
 
             last_response = self.session().http_client().request_body(request).await;
 
@@ -517,6 +505,29 @@ impl SpClient {
         }
 
         last_response
+    }
+
+    async fn add_request_headers(&self, headers_mut: &mut HeaderMap) -> Result<(), Error> {
+        // Reconnection logic: keep getting (cached) tokens because they might have expired.
+        let token = self
+            .session()
+            .token_provider()
+            .get_token("playlist-read")
+            .await?;
+
+        headers_mut.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("{} {}", token.token_type, token.access_token,))?,
+        );
+
+        if let Ok(client_token) = self.client_token().await {
+            headers_mut.insert(CLIENT_TOKEN, HeaderValue::from_str(&client_token)?);
+        } else {
+            // currently these endpoints seem to work fine without it
+            warn!("Unable to get client token. Trying to continue without...");
+        }
+
+        Ok(())
     }
 
     pub async fn put_connect_state(
