@@ -107,11 +107,11 @@ pub struct ItemsResponse<I> {
 
 #[derive(Debug, Deserialize)]
 pub struct PageResponse<I> {
-    items: Vec<I>,
+    pub items: Vec<I>,
     #[serde(rename = "pagingInfo")]
-    paging_info: OffsetLimit,
+    pub paging_info: OffsetLimit,
     #[serde(rename = "totalCount")]
-    total_count: u64,
+    pub total_count: u64,
 }
 
 struct LibraryAlbumsRequest(OffsetLimit);
@@ -146,7 +146,7 @@ pub struct AlbumsResponse<R> {
 pub struct LibraryAlbumResponse {
     #[serde(rename = "addedAt")]
     #[serde(deserialize_with = "deserialize_iso_string")]
-    added_at: OffsetDateTime,
+    pub added_at: OffsetDateTime,
     pub album: LibraryAlbumResponseAlbum,
 }
 
@@ -164,7 +164,7 @@ pub struct LibraryAlbumResponseAlbumData {
     #[serde(rename = "coverArt")]
     pub cover_art: LibraryAlbumResponseAlbumDataCoverArt,
     #[serde(deserialize_with = "deserialize_iso_string")]
-    date: OffsetDateTime,
+    pub date: OffsetDateTime,
 }
 
 #[derive(Debug, Deserialize)]
